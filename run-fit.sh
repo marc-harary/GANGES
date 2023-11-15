@@ -1,0 +1,12 @@
+python -m train fit --seed_everything=123 \
+                    --model.latent_dim=100 \
+                    --model.hidden_dim=128 \
+                    --model.scale=0.2 \
+                    --model.im_shape=[3,256,256] \
+                    --model.optim_g=AdamW \
+                    --model.optim_g.lr=1e-4 \
+                    --model.optim_g.weight_decay=1e-3 \
+                    --model.optim_d=AdamW \
+                    --model.optim_d.lr=1e-4 \
+                    --model.optim_d.weight_decay=1e-3 \
+                    --data.file_path=dataset-10-256.h5
