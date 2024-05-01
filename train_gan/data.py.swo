@@ -1,0 +1,85 @@
+import h5py
+import numpy as np
+import torch
+from torch.utils.data import Dataset, DataLoader, random_split
+import pytorch_lightning as pl
+from torchvision.transforms import v2
+from PIL import Image
+
+
+class Hdf5Dataset(Dataset):
+    def __init__(self, file_path, patch_idxs, crop_size=None, is_train=False):
+        self.file_path = file_path
+        self.patch_idxs = patch_idxs
+        self.crop_size = crop_size
+        transforms = [
+            v2.ToImage(),
+            v2.ToDtype(torch.float32, scale=True),
+        ]
+        if is_train:
+            # transforms.append(v2.ElasticTransform())
+            # transforms.append(v2.RandomAffine(180))
+            if self.crop_size is not None:
+                transforms.append(v2.RandomCrop((self.crop_size, self.crop_size)))
+        self.transforms = v2.Compose(transforms)
+
+    def __len__(self):
+        return len(self.patch_idxs)
+
+    def __getitem__(self, idx):
+        with h5py.File(self.file_path, "r") as file:
+            patch_idx = self.patch_idxs[idx]
+            hne_patch = file["hne_patches"][patch_idx]
+            ihc_patch = file["ihc_patches"][patch_idx]
+            concat = np.concatenate((hne_patch, ihc_patch), axis=-1)
+            trans_concat = self.transforms(concat)
+            hne_patch, ihc_patch = torch.chunk(trans_concat, 2, dim=0)
+
+        return hne_patch, ihc_patch
+
+
+class GANDataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        file_path,
+        batch_size=32,
+        crop_size=None,
+        train_val_test_split=[0.7, 0.15, 0.15],
+    ):
+        super().__init__()
+        self.file_path = file_path
+        self.batch_size = batch_size
+        self.train_val_test_split = train_val_test_split
+        self.crop_size = crop_size
+
+    def setup(self, stage=None):
+        # Create the full dataset
+        with h5py.File(self.file_path, "r") as file:
+            total_size = len(file["hne_patches"])
+
+        # Calculate sizes for train, val, and test splits
+        train_size = int(self.train_val_test_split[0] * total_size)
+        val_size = int(self.train_val_test_split[1] * total_size)
+        test_size = total_size - train_size - val_size
+
+        train_idxs, val_idxs, test_idxs = random_split(
+            range(total_size), [train_size, val_size, test_size]
+        )
+        self.train_dataset = Hdf5Dataset(
+            self.file_path, train_idxs, crop_size=self.crop_size, is_train=True
+        )
+        self.val_dataset = Hdf5Dataset(
+            self.file_path, val_idxs, crop_size=self.crop_size, is_train=False
+        )
+        self.test_dataset = Hdf5Dataset(
+            self.file_path, test_idxs, crop_size=self.crop_size, is_train=False
+        )
+
+    def train_dataloader(self):
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True)
+
+    def val_dataloader(self):
+        return DataLoader(self.val_dataset, batch_size=self.batch_size)
+
+    def test_dataloader(self):
+        return DataLoader(self.test_dataset, batch_size=self.batch_size)
